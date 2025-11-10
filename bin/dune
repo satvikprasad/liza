@@ -1,0 +1,4 @@
+(executable
+ (public_name liza)
+ (name main)
+ (libraries liza))
