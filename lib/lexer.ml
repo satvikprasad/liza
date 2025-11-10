@@ -1,32 +1,32 @@
 (* Token types *)
 type token_type =
   (* Single character tokens *)
-  LeftParen |
-  RightParen |
-  LeftBrace |
-  RightBrace |
-  Comma |
-  Dot |
-  Minus |
-  Plus |
-  Semicolon |
-  Slash |
-  Star |
+  | LeftParen
+  | RightParen
+  | LeftBrace
+  | RightBrace
+  | Comma
+  | Dot
+  | Minus
+  | Plus
+  | Semicolon
+  | Slash
+  | Star
 
   (* Multi-character tokens *)
-  Bang | BangEqual |
-  Equal | EqualEqual |
-  Greater | GreaterEqual |
-  Less | LessEqual |
+  | Bang | BangEqual
+  | Equal | EqualEqual
+  | Greater | GreaterEqual
+  | Less | LessEqual
 
   (* Literals *)
-  Identifier | String | Number |
+  | Identifier | String | Number
 
   (* Keywords *)
-  And | Class | Else | False | Fn | For | If | Nil |
-  Or | Print | Return | Super | This | True | Var | While |
+  | And | Class | Else | False | Fn | For | If | Nil
+  | Or | Print | Return | Super | This | True | Var | While
 
-  EOF
+  | EOF
 
 let string_of_token_type tt =
 	match tt with
@@ -178,6 +178,41 @@ let scan_tokens (source : string) : token list =
 					literal=Some lexeme;
 					line
 				} :: tokens)
+
+			(* Alpha lexer *)
+			| 'a' .. 'z' | 'A' .. 'Z' | '_' ->
+				(* Returns the index of the first character after the identifier. *)
+				let rec scan_identifier (p : int) =
+					if p >= String.length source then
+						p
+					else
+						match source.[p] with
+						| 'a' .. 'z' | 'A' .. 'Z' | '_' | '0' .. '9' -> scan_identifier (p + 1)
+						| _ -> p
+				in let end_pos = scan_identifier pos in
+
+				let lexeme = String.sub source pos (end_pos - pos) in
+				let token_type = match lexeme with
+					| "and" -> And
+					| "class" -> Class
+					| "else" -> Else
+					| "false" -> False
+					| "for" -> For
+					| "fn" -> Fn
+					| "if" -> If
+					| "nil" -> Nil
+					| "or" -> Or
+					| "print" -> Print
+					| "return" -> Return
+					| "super" -> Super
+					| "this" -> This
+					| "true" -> True
+					| "var" -> Var
+					| "while" -> While
+					| _ -> Identifier
+
+				in scan end_pos line ({token_type; lexeme; literal=None; line} :: tokens)
+
 			| char ->
 				Error.error line (Printf.sprintf "Unexpected character %c" char);
 				scan (pos + 1) line tokens
