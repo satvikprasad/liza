@@ -1,10 +1,13 @@
 let run (source : string) =
-    Liza.Lexer.scan_tokens source
+    let tokens = Liza.Lexer.scan_tokens source in
+    let expr, _ = Liza.Parser.parse_expression tokens in 
+    Liza.Lexer.tokens_to_string tokens |> Printf.printf "%s\n";
+    Liza.Parser.pretty_print_expr expr |> Printf.printf "%s\n"
 
-let _run_file file =
+let run_file file =
     run (In_channel.with_open_bin file In_channel.input_all)
 
-let rec _run_repl () =
+let rec run_repl () =
     try
         Printf.printf "> ";
         flush stdout;
@@ -12,29 +15,15 @@ let rec _run_repl () =
         let input = read_line () in
             (* Run input *)
 
-        Printf.printf "%s\n" (Liza.Lexer.tokens_to_string (run input));
+        run input;
 
-        _run_repl ()
+        run_repl ()
     with End_of_file ->
         Printf.printf "\nExiting...\n"
 
 let () =
-    Liza.Parser.Unary (
-        Liza.Parser.Bang,
-        Liza.Parser.Grouping (
-            Liza.Parser.Binary (
-                (Liza.Parser.Literal (Liza.Parser.String "Hello")),
-                Liza.Parser.Plus,
-                (Liza.Parser.Literal (Liza.Parser.Number 42.3))
-            )
-        )
-    )
-    |> Liza.Parser.pretty_print_expr
-    |> Printf.printf "%s\n"
-(*
     match Sys.argv with
     | [|_; file|] ->
-        Printf.printf "%s\n" (Liza.Lexer.tokens_to_string (run_file file));
+        run_file file;
     | [|_|] -> run_repl ()
     | _ -> Printf.printf "Usage: liza [script]\n"
-    *)
