@@ -65,6 +65,9 @@ let rec pretty_print_expr (e : expr): string =
     | Grouping expr ->
         pretty_print_expr expr |> Printf.sprintf "(%s)"
 
+exception GroupException of string
+exception InvalidTokenException of string
+
 (** Parses primary grammar *)
 let rec parse_primary (tokens : Lexer.token list): expr * Lexer.token list =
     match tokens with
@@ -76,12 +79,16 @@ let rec parse_primary (tokens : Lexer.token list): expr * Lexer.token list =
 
     | { token_type = Lexer.LeftParen; _ } :: tl ->
         let inner_exp, rest = parse_expression tl in
-        (match rest with
-        | {token_type = Lexer.RightParen; _} :: rest' -> Grouping inner_exp, rest'
-        | _ -> Literal Nil, rest) (* TODO(satvik): Handle malformed expression *)
+        (
+            match rest with
+            | {token_type = Lexer.RightParen; _} :: rest' -> Grouping inner_exp, rest'
+            | _ -> GroupException "Expected right paren after left paren grouping." |> raise
+        ) (* TODO(satvik): Handle malformed expression *)
 
-    | _ -> (* TODO(satvik): Handle malformed expression*)
-        Literal Nil, tokens
+    | hd :: _ -> (* TODO(satvik): Handle malformed expression*)
+        InvalidTokenException (Printf.sprintf "Encountered invalid token (%s) at line %d\n" hd.lexeme hd.line) |> raise
+    | _ ->
+        InvalidTokenException "Ran out of tokens, expected a primary expression." |> raise
 
 (** Parses unary grammar *)
 and parse_unary (tokens: Lexer.token list): expr * Lexer.token list =
