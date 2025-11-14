@@ -68,126 +68,184 @@ let rec pretty_print_expr (e : expr): string =
 exception GroupException of string
 exception InvalidTokenException of string
 
+type parser_error = 
+    | InvalidToken of string * Lexer.token option
+
 (** Parses primary grammar *)
-let rec parse_primary (tokens : Lexer.token list): expr * Lexer.token list =
+let rec parse_primary (tokens : Lexer.token list): (expr * Lexer.token list, parser_error) result =
     match tokens with
-    | { token_type = Lexer.String; literal = Some lit; _ } :: tl -> Literal (String lit), tl
-    | { token_type = Lexer.Number; literal = Some lit; _ } :: tl -> Literal (Number (Float.of_string lit)), tl
-    | { token_type = Lexer.True; _ } :: tl -> Literal True, tl
-    | { token_type = Lexer.False; _ } :: tl -> Literal False, tl
-    | { token_type = Lexer.Nil; _ } :: tl -> Literal Nil, tl
+    | { token_type = Lexer.String; literal = Some lit; _ } :: tl -> Ok (Literal (String lit), tl)
+    | { token_type = Lexer.Number; literal = Some lit; _ } :: tl -> Ok (Literal (Number (Float.of_string lit)), tl)
+    | { token_type = Lexer.True; _ } :: tl -> Ok (Literal True, tl)
+    | { token_type = Lexer.False; _ } :: tl -> Ok (Literal False, tl)
+    | { token_type = Lexer.Nil; _ } :: tl -> Ok (Literal Nil, tl)
 
     | { token_type = Lexer.LeftParen; _ } :: tl ->
-        let inner_exp, rest = parse_expression tl in
-        (
+        Result.bind (parse_expression tl) (fun (inner_exp, rest) -> 
             match rest with
-            | {token_type = Lexer.RightParen; _} :: rest' -> Grouping inner_exp, rest'
-            | _ -> GroupException "Expected right paren after left paren grouping." |> raise
-        ) (* TODO(satvik): Handle malformed expression *)
+            | {token_type = Lexer.RightParen; _} :: rest' -> Ok (Grouping inner_exp, rest')
+            | tok :: _ -> Error (InvalidToken (
+                Printf.sprintf "Expected right paren after left paren grouping, but encountered %s" tok.lexeme, 
+                Some tok
+            ))
+            | [] -> Error (InvalidToken ("Expected right paren after left paren grouping, but ran out of tokens.", None))
+        )
 
     | hd :: _ -> (* TODO(satvik): Handle malformed expression*)
-        InvalidTokenException (Printf.sprintf "Encountered invalid token (%s) at line %d\n" hd.lexeme hd.line) |> raise
+        Error (InvalidToken ((Printf.sprintf "Encountered invalid token (%s) at line %d\n" hd.lexeme hd.line), Some hd))
     | _ ->
-        InvalidTokenException "Ran out of tokens, expected a primary expression." |> raise
+        Error (InvalidToken ("Ran out of tokens, expected a primary expression.", None))
 
 (** Parses unary grammar *)
-and parse_unary (tokens: Lexer.token list): expr * Lexer.token list =
+and parse_unary (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result =
     match tokens with
     | { token_type = Lexer.Bang; _ } :: tl ->
-        let unary, rest = parse_unary tl in
-        (Unary (Bang, unary)), rest
+        Result.bind (parse_unary tl) (fun (unary, rest) -> 
+            Ok ((Unary (Bang, unary)), rest)
+        )
 
     | { token_type = Lexer.Minus; _ } :: tl ->
-        let unary, rest = parse_unary tl in
-        (Unary (Minus, unary)), rest
+        Result.bind (parse_unary tl) (fun (unary, rest) -> 
+            Ok ((Unary (Minus, unary)), rest)
+        )
 
     | _ -> parse_primary tokens
 
 (** Parses factor grammar *)
-and parse_factor (tokens: Lexer.token list): expr * Lexer.token list =
-    let left, rest = parse_unary tokens in
-
-    let rec p (e: expr) (t: Lexer.token list): expr * Lexer.token list =
-        (match t with
+and parse_factor (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result =
+    Result.bind (parse_unary tokens) (fun (left, rest) -> 
+        let rec p (e: expr) (t: Lexer.token list): (expr * Lexer.token list, parser_error) result =
+            (match t with
         | { token_type = Lexer.Slash; _ } :: tl ->
-            let right, rest' = parse_unary tl in
-            p (Binary (e, Slash, right)) rest'
+                Result.bind (parse_unary tl) (fun (right, rest') ->
+                    p (Binary (e, Slash, right)) rest'
+                )
 
         | { token_type = Lexer.Star; _ } :: tl ->
-            let right, rest' = parse_unary tl in
-            p (Binary (e, Star, right)) rest'
+                Result.bind (parse_unary tl) (fun (right, rest') -> 
+                    p (Binary (e, Star, right)) rest'
+                )
 
-        | _ -> e, t)
-    in
-        p left rest
+        | _ -> Ok (e, t))
+        in p left rest
+    )
+
 
 (** Parses term grammar *)
-and parse_term (tokens: Lexer.token list): expr * Lexer.token list =
-    let left, rest = parse_factor tokens in
+and parse_term (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result =
+    Result.bind (parse_factor tokens) (fun (left, rest) -> 
+        let rec p (e: expr) (t : Lexer.token list): (expr * Lexer.token list, parser_error) result =
+            (
+                match t with
+                | { token_type = Lexer.Plus; _ } :: tl ->
+                    Result.bind (parse_factor tl) (fun (right, rest') ->
+                        p (Binary (e, Plus, right)) rest'
+                    )
 
-    let rec p (e: expr) (t : Lexer.token list): expr * Lexer.token list =
-        (
-            match t with
-            | { token_type = Lexer.Plus; _ } :: tl ->
-                let right, rest' = parse_factor tl in
-                p (Binary (e, Plus, right)) rest'
+                | { token_type = Lexer.Minus; _ } :: tl ->
+                    Result.bind (parse_factor tl) (fun (right, rest') ->
+                        p (Binary (e, Minus, right)) rest'
+                    )
+                | _ -> Ok (e, t)
+            )
 
-            | { token_type = Lexer.Minus; _ } :: tl ->
-                let right, rest' = parse_factor tl in
-                p (Binary (e, Minus, right)) rest'
+        in p left rest
+    )
 
-            | _ -> e, t
-        )
-
-    in p left rest
 
 (** Parses comparison grammar *)
-and parse_comparison (tokens: Lexer.token list): expr * Lexer.token list =
-    let left, rest = parse_term tokens in
+and parse_comparison (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result =
+    Result.bind (parse_term tokens) (fun (left, rest) -> 
+        let rec p (e: expr) (t : Lexer.token list): (expr * Lexer.token list, parser_error) result =
+            (
+                match t with
+                | { token_type = Lexer.Greater; _ } :: tl ->
+                    Result.bind (parse_factor tl) (fun (right, rest') -> 
+                        p (Binary (e, Greater, right)) rest'
+                    )
+                | { token_type = Lexer.GreaterEqual; _ } :: tl ->
+                    Result.bind (parse_factor tl) (fun (right, rest') -> 
+                        p (Binary (e, GreaterEqual, right)) rest'
+                    )
+                | { token_type = Lexer.Less; _ } :: tl ->
+                    Result.bind (parse_factor tl) (fun (right, rest') -> 
+                        p (Binary (e, Less, right)) rest'
+                    )
+                | { token_type = Lexer.LessEqual; _ } :: tl ->
+                    Result.bind (parse_factor tl) (fun (right, rest') -> 
+                        p (Binary (e, LessEqual, right)) rest'
+                    )
+                | _ -> Ok (e, t)
+            )
 
-    let rec p (e: expr) (t : Lexer.token list): expr * Lexer.token list =
-        (
-            match t with
-            | { token_type = Lexer.Greater; _ } :: tl ->
-                let right, rest' = parse_factor tl in
-                p (Binary (e, Greater, right)) rest'
+        in p left rest
+    )
 
-            | { token_type = Lexer.GreaterEqual; _ } :: tl ->
-                let right, rest' = parse_factor tl in
-                p (Binary (e, GreaterEqual, right)) rest'
-
-            | { token_type = Lexer.Less; _ } :: tl ->
-                let right, rest' = parse_factor tl in
-                p (Binary (e, Less, right)) rest'
-
-            | { token_type = Lexer.LessEqual; _ } :: tl ->
-                let right, rest' = parse_factor tl in
-                p (Binary (e, LessEqual, right)) rest'
-
-            | _ -> e, t
-        )
-
-    in p left rest
 
 (** Parses equality grammar *)
-and parse_equality (tokens: Lexer.token list): expr * Lexer.token list =
-    let left, rest = parse_comparison tokens in
+and parse_equality (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result =
+    Result.bind (parse_comparison tokens) (fun (left, rest) -> 
+        let rec p (e: expr) (t : Lexer.token list): (expr * Lexer.token list, parser_error) result =
+            (
+                match t with
+                | { token_type = Lexer.BangEqual; _ } :: tl ->
+                    Result.bind (parse_factor tl) (fun (right, rest') -> 
+                        p (Binary (e, NotEqual, right)) rest'
+                    )
+                | { token_type = Lexer.EqualEqual; _ } :: tl ->
+                    Result.bind (parse_factor tl) (fun (right, rest') -> 
+                        p (Binary (e, EqualEqual, right)) rest'
+                    )
+                | _ -> Ok (e, t)
+            )
 
-    let rec p (e: expr) (t : Lexer.token list): expr * Lexer.token list =
-        (
-            match t with
-            | { token_type = Lexer.BangEqual; _ } :: tl ->
-                let right, rest' = parse_factor tl in
-                p (Binary (e, NotEqual, right)) rest'
+        in p left rest
+    )
 
-            | { token_type = Lexer.EqualEqual; _ } :: tl ->
-                let right, rest' = parse_factor tl in
-                p (Binary (e, EqualEqual, right)) rest'
+and parse_expression (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result =
+    parse_equality tokens
 
-            | _ -> e, t
+type eval_error = 
+    | TypeError of string * expr
+
+let rec eval_expression (e : expr): (expr, eval_error) result =
+    match e with 
+    | Literal lit -> Ok (Literal lit)
+
+    | Unary (Bang, expr) ->
+        Result.bind (eval_expression expr) (fun inner ->
+            match inner with 
+            | Literal False -> Ok (Literal True)
+            | Literal True -> Ok (Literal False)
+            | _ -> Error (TypeError ("Invlaid unary operation encountered", Unary (Bang, expr)))
+        )
+    | Unary (Minus, expr) ->
+        Result.bind (eval_expression expr) (fun inner -> 
+            match inner with 
+            | (Literal Number n) -> Ok (Literal (Number (-1. *. n)))
+            | _ -> Error (TypeError ("Invalid unary operation encountered", Unary (Minus, expr)))
+        )
+    | Binary (e1, op, e2) ->
+        Result.bind (eval_expression e1) (fun left ->
+            Result.bind (eval_expression e2) (fun right -> (
+                match (left, op, right) with 
+                    | Literal l, EqualEqual, Literal r -> if l = r then Ok (Literal True) else Ok (Literal False)
+                    | Literal l, NotEqual, Literal r -> if l = r then Ok (Literal False) else Ok (Literal True)
+
+                    | Literal l, Less, Literal r -> if l < r then Ok (Literal True) else Ok (Literal False)
+                    | Literal l, Greater, Literal r -> if l > r then Ok (Literal False) else Ok (Literal True)
+
+                    | Literal l, LessEqual, Literal r -> if l <= r then Ok (Literal True) else Ok (Literal False)
+                    | Literal l, GreaterEqual, Literal r -> if l >= r then Ok (Literal False) else Ok (Literal True)
+
+                    | Literal Number n1, Plus, Literal Number n2 -> Ok (Literal (Number (n1 +. n2)))
+                    | Literal Number n1, Minus, Literal Number n2 -> Ok (Literal (Number (n1 -. n2)))
+                    | Literal Number n1, Star, Literal Number n2 -> Ok (Literal (Number (n1 *. n2)))
+                    | Literal Number n1, Slash, Literal Number n2 -> Ok (Literal (Number (n1 /. n2)))
+
+                    | _ -> Error (TypeError ("Invalid binary operand encountered", (Binary (e1, op, e2))))
+            ))
         )
 
-    in p left rest
-
-and parse_expression (tokens: Lexer.token list): expr * Lexer.token list =
-    parse_equality tokens
+    | Grouping (expr) -> eval_expression expr
+        
