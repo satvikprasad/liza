@@ -4,11 +4,15 @@ let run (source : string) =
     | Ok (statements) -> (
         List.iter (fun s -> (
             match (Liza.Parser.eval_statement s Liza.Parser.global_env) with
-            | Ok () -> ()
+            | Ok _ -> ()
             | Error (Liza.Parser.TypeError (msg, expr)) -> Printf.printf "TypeError: %s [%s]\n" msg (Liza.Parser.pretty_print_expr expr)
             | Error (Liza.Parser.IdentifierNotFound (msg, expr)) -> Printf.printf "IdentifierNotFound: %s [%s]\n" msg (Liza.Parser.pretty_print_expr expr)
             | Error (Liza.Parser.LookupError (id)) -> Printf.printf "Could not find variable '%s'.\n" id 
             | Error (Liza.Parser.AssignmentError (id)) -> Printf.printf "Could not assign to unknown variable '%s'.\n" id 
+
+            | Error (Liza.Parser.IncorrectArgumentsError) -> Printf.printf "Passed incorrect number of arguments to function.\n"
+
+            | Error (Liza.Parser.UncallableExpr expr) -> Printf.printf "UncallableExpr: Attempted to call expression %s that was not callable.\n" (Liza.Parser.pretty_print_expr expr)
         )) statements
     )
 
