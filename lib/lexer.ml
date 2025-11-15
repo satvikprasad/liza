@@ -203,7 +203,7 @@ let scan_tokens (source : string) : token list =
 					| "nil" -> Nil
 					| "or" -> Or
 					| "print" -> Print
-					| "return" -> Return
+					| "ret" -> Return
 					| "super" -> Super
 					| "this" -> This
 					| "true" -> True

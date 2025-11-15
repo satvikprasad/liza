@@ -1,0 +1,9 @@
+var out_tobi = fn (a) {
+    if (a > 10) {
+        ret "Tobi is a " + a;
+    }
+
+    ret "Tobi isn't a " + a;
+};
+
+print out_tobi (12);
