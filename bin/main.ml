@@ -3,10 +3,12 @@ let run (source : string) =
     match Liza.Parser.parse_program tokens with
     | Ok (statements) -> (
         List.iter (fun s -> (
-            match (Liza.Parser.eval_statement s) with
+            match (Liza.Parser.eval_statement s Liza.Parser.global_env) with
             | Ok () -> ()
             | Error (Liza.Parser.TypeError (msg, expr)) -> Printf.printf "TypeError: %s [%s]\n" msg (Liza.Parser.pretty_print_expr expr)
             | Error (Liza.Parser.IdentifierNotFound (msg, expr)) -> Printf.printf "IdentifierNotFound: %s [%s]\n" msg (Liza.Parser.pretty_print_expr expr)
+            | Error (Liza.Parser.LookupError (id)) -> Printf.printf "Could not find variable '%s'.\n" id 
+            | Error (Liza.Parser.AssignmentError (id)) -> Printf.printf "Could not assign to unknown variable '%s'.\n" id 
         )) statements
     )
 

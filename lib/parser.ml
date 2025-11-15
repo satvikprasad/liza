@@ -42,6 +42,7 @@ type expr =
     | Binary of expr * binary_op * expr
     | Grouping of expr
     | Identifier of string
+    | Assignment of string * expr
 
 (** Generates a string representation of a given AST. *)
 let rec pretty_print_expr (e : expr): string =
@@ -70,12 +71,16 @@ let rec pretty_print_expr (e : expr): string =
 
     | Identifier name -> Printf.sprintf "%s" name
 
+    | Assignment (var, expr) -> Printf.sprintf "(= %s %s)" var (pretty_print_expr expr)
+
 exception GroupException of string
 exception InvalidTokenException of string
 
 type eval_error =
     | TypeError of string * expr
     | IdentifierNotFound of string * expr
+    | LookupError of string
+    | AssignmentError of string
 
 type parser_error =
     | InvalidToken of string * Lexer.token option
@@ -206,19 +211,51 @@ and parse_equality (tokens: Lexer.token list): (expr * Lexer.token list, parser_
 
         in p left rest
 
-and parse_expression (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result =
-    parse_equality tokens
+and parse_assignment (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result = 
+    match tokens with 
+    | { token_type = Lexer.Identifier; lexeme = id_lex ; _ } :: { token_type = Lexer.Equal; _ } :: tl ->
+        parse_assignment tl >>= fun (expr, rest) -> Ok (Assignment (id_lex, expr), rest)
+    | _ -> parse_equality tokens
 
-type environment = { values: (string, literal) Hashtbl.t }
-let global_env = { values = Hashtbl.create 64 }
+and parse_expression (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result =
+    parse_assignment tokens
+
+type environment = { 
+    values: (string, literal) Hashtbl.t;
+    enclosing: environment option
+}
+
+let global_env = { values = Hashtbl.create 64; enclosing = None }
+
+let rec env_lookup (env : environment) (id : string): (literal, eval_error) result = 
+    try 
+        Ok (Hashtbl.find env.values id)
+    with 
+    | Not_found -> 
+        match env.enclosing with 
+        | Some e -> env_lookup e id
+        | None -> Error (LookupError id)
+
+let rec env_assign (env : environment) (id : string) (lit : literal): (literal, eval_error) result = 
+    if Hashtbl.mem env.values id then (
+        Hashtbl.replace env.values id lit;
+        Ok (lit)
+    ) else (
+        match env.enclosing with 
+        | Some e -> env_assign e id lit
+        | None -> Error (AssignmentError id)
+    )
+
+let create_scoped_env (parent: environment) =
+    { values = Hashtbl.create 64; enclosing = Some parent } 
 
 (** Recursively evaluates an expression into a literal. *)
-let rec eval_expression (e : expr): (literal, eval_error) result =
+let rec eval_expression (e : expr) (env : environment): (literal, eval_error) result =
     match e with
     | Literal lit -> Ok (lit)
 
     | Unary (Bang, expr) ->
-        eval_expression expr >>= fun inner -> (
+        eval_expression expr env >>= fun inner -> (
             match inner with
             | False -> Ok (True)
             | True -> Ok (False)
@@ -226,15 +263,15 @@ let rec eval_expression (e : expr): (literal, eval_error) result =
         )
 
     | Unary (Minus, expr) ->
-        eval_expression expr >>= fun inner ->  (
+        eval_expression expr env >>= fun inner ->  (
             match inner with
             | (Number n) -> Ok ((Number (-1. *. n)))
             | _ -> Error (TypeError ("Invalid unary operation encountered", Unary (Minus, expr)))
         )
 
     | Binary (e1, op, e2) ->
-        eval_expression e1 >>= fun left ->
-            eval_expression e2 >>= fun right -> (
+        eval_expression e1 env >>= fun left ->
+            eval_expression e2 env >>= fun right -> (
                 match (left, op, right) with
                     | l, EqualEqual, r -> if l = r then Ok (True) else Ok (False)
                     | l, NotEqual, r -> if l = r then Ok (False) else Ok (True)
@@ -260,26 +297,24 @@ let rec eval_expression (e : expr): (literal, eval_error) result =
                     | _ -> Error (TypeError ("Invalid binary operand encountered", (Binary (e1, op, e2))))
             )
 
-    | Grouping expr -> eval_expression expr
+    | Grouping expr -> eval_expression expr env
 
-    | Identifier id -> (
-        try 
-            Ok (Hashtbl.find global_env.values id)
-        with
-        | Not_found -> Error (IdentifierNotFound (id, e))
-    )
+    | Identifier id -> env_lookup env id
+
+    | Assignment (id, expr) -> eval_expression expr env >>= fun lit -> env_assign env id lit
 
 type statement = 
     | VarDecl of string * expr
     | Print of expr
     | Expression of expr
+    | Block of statement list
 
-let eval_statement (s: statement): (unit, eval_error) result =
+let rec eval_statement (s : statement) (env : environment): (unit, eval_error) result =
     match s with 
-    | VarDecl (id, expr) -> eval_expression expr >>= fun l -> (
-        Ok (Hashtbl.add global_env.values id l)
+    | VarDecl (id, expr) -> eval_expression expr env >>= fun l -> (
+        Ok (Hashtbl.add env.values id l)
     )
-    | Print expr -> eval_expression expr >>= fun l -> (
+    | Print expr -> eval_expression expr env >>= fun l -> (
         match l with 
         | String s -> Printf.printf "%s\n" s
         | Number n -> Printf.printf "%g\n" n
@@ -287,7 +322,17 @@ let eval_statement (s: statement): (unit, eval_error) result =
         | False -> Printf.printf "false\n"
         | Nil -> Printf.printf "nil\n"
     ); Ok()
-    | Expression _ -> Ok ()
+    | Expression e -> eval_expression e env >>= fun _ -> Ok ()
+    | Block statements -> (
+        let scoped_env = create_scoped_env env in
+
+        let rec p (stats : statement list) : (unit, eval_error) result = 
+            match stats with 
+            | s :: rest -> eval_statement s scoped_env >>= fun () -> p rest
+            | _ -> Ok ()
+
+        in p statements
+    )
 
 
 let rec parse_program (tokens : Lexer.token list): (statement list, parser_error) result =
@@ -301,7 +346,7 @@ let rec parse_program (tokens : Lexer.token list): (statement list, parser_error
     in
     parse tokens
 
-and parse_statement (tokens: Lexer.token list): (statement * Lexer.token list, parser_error) result =
+and parse_statement (tokens : Lexer.token list): (statement * Lexer.token list, parser_error) result =
     match tokens with
     | { token_type = Lexer.Var; _ } :: { token_type = Lexer.Identifier; lexeme = id_lex; _ } :: tl -> (
         match tl with
@@ -326,6 +371,18 @@ and parse_statement (tokens: Lexer.token list): (statement * Lexer.token list, p
             | _ -> Error MissingSemicolon
         );
 
+    | { token_type = Lexer.LeftBrace; _} :: tl ->
+        let rec p (tokens: Lexer.token list) : (statement list * Lexer.token list, parser_error) result = 
+            match tokens with
+            | { token_type = Lexer.RightBrace; _ } :: tl' -> Ok ([], tl')
+            | _ -> parse_statement tokens >>= fun (stat, rest) -> (
+                p rest >>= fun (rem_stats, rest') -> (
+                    Ok (stat :: rem_stats, rest')
+                )
+            )
+        in p tl >>= fun (statements, toks) -> (
+            Ok (Block statements, toks)
+        )
     | _ ->
         parse_expression tokens >>= fun (expr, toks) -> (
             match toks with
