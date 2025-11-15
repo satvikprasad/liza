@@ -1,4 +1,4 @@
-let (>>=) o f = Result.bind o f 
+let (>>=) o f = Result.bind o f
 
 type literal =
     | Number of float
@@ -41,6 +41,7 @@ type expr =
     | Unary of unary_op * expr
     | Binary of expr * binary_op * expr
     | Grouping of expr
+    | Identifier of string
 
 (** Generates a string representation of a given AST. *)
 let rec pretty_print_expr (e : expr): string =
@@ -67,16 +68,18 @@ let rec pretty_print_expr (e : expr): string =
     | Grouping expr ->
         pretty_print_expr expr |> Printf.sprintf "(%s)"
 
+    | Identifier name -> Printf.sprintf "%s" name
+
 exception GroupException of string
 exception InvalidTokenException of string
 
-type eval_error = 
+type eval_error =
     | TypeError of string * expr
+    | IdentifierNotFound of string * expr
 
-type parser_error = 
+type parser_error =
     | InvalidToken of string * Lexer.token option
     | MissingSemicolon
-    | EvalError of eval_error
     | PrintInvalidExpression
     | ExpectedEOF
 
@@ -89,12 +92,14 @@ let rec parse_primary (tokens : Lexer.token list): (expr * Lexer.token list, par
     | { token_type = Lexer.False; _ } :: tl -> Ok (Literal False, tl)
     | { token_type = Lexer.Nil; _ } :: tl -> Ok (Literal Nil, tl)
 
+    | { token_type = Lexer.Identifier; lexeme; _ } :: tl -> Ok (Identifier lexeme, tl)
+
     | { token_type = Lexer.LeftParen; _ } :: tl ->
         parse_expression tl >>= fun (inner_exp, rest) -> (
             match rest with
             | {token_type = Lexer.RightParen; _} :: rest' -> Ok (Grouping inner_exp, rest')
             | tok :: _ -> Error (InvalidToken (
-                Printf.sprintf "Expected right paren after left paren grouping, but encountered %s" tok.lexeme, 
+                Printf.sprintf "Expected right paren after left paren grouping, but encountered %s" tok.lexeme,
                 Some tok
             ))
             | [] -> Error (InvalidToken ("Expected right paren after left paren grouping, but ran out of tokens.", None))
@@ -102,6 +107,7 @@ let rec parse_primary (tokens : Lexer.token list): (expr * Lexer.token list, par
 
     | hd :: _ -> (* TODO(satvik): Handle malformed expression*)
         Error (InvalidToken ((Printf.sprintf "Encountered invalid token (%s) at line %d\n" hd.lexeme hd.line), Some hd))
+
     | _ ->
         Error (InvalidToken ("Ran out of tokens, expected a primary expression.", None))
 
@@ -109,18 +115,18 @@ let rec parse_primary (tokens : Lexer.token list): (expr * Lexer.token list, par
 and parse_unary (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result =
     match tokens with
     | { token_type = Lexer.Bang; _ } :: tl ->
-        parse_unary tl >>= fun (unary, rest) -> 
+        parse_unary tl >>= fun (unary, rest) ->
             Ok ((Unary (Bang, unary)), rest)
 
     | { token_type = Lexer.Minus; _ } :: tl ->
-        parse_unary tl >>= fun (unary, rest) -> 
+        parse_unary tl >>= fun (unary, rest) ->
             Ok ((Unary (Minus, unary)), rest)
 
     | _ -> parse_primary tokens
 
 (** Parses factor grammar *)
 and parse_factor (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result =
-    parse_unary tokens >>= fun (left, rest) -> 
+    parse_unary tokens >>= fun (left, rest) ->
         let rec p (e: expr) (t: Lexer.token list): (expr * Lexer.token list, parser_error) result =
             (match t with
         | { token_type = Lexer.Slash; _ } :: tl ->
@@ -128,7 +134,7 @@ and parse_factor (tokens: Lexer.token list): (expr * Lexer.token list, parser_er
                 p (Binary (e, Slash, right)) rest'
 
         | { token_type = Lexer.Star; _ } :: tl ->
-            parse_unary tl >>= fun (right, rest') -> 
+            parse_unary tl >>= fun (right, rest') ->
                 p (Binary (e, Star, right)) rest'
 
         | _ -> Ok (e, t))
@@ -136,7 +142,7 @@ and parse_factor (tokens: Lexer.token list): (expr * Lexer.token list, parser_er
 
 (** Parses term grammar *)
 and parse_term (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result =
-    parse_factor tokens >>= fun (left, rest) -> 
+    parse_factor tokens >>= fun (left, rest) ->
         let rec p (e: expr) (t : Lexer.token list): (expr * Lexer.token list, parser_error) result =
             (
                 match t with
@@ -155,24 +161,24 @@ and parse_term (tokens: Lexer.token list): (expr * Lexer.token list, parser_erro
 
 (** Parses comparison grammar *)
 and parse_comparison (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result =
-    parse_term tokens >>= fun (left, rest) -> 
+    parse_term tokens >>= fun (left, rest) ->
         let rec p (e: expr) (t : Lexer.token list): (expr * Lexer.token list, parser_error) result =
             (
                 match t with
                 | { token_type = Lexer.Greater; _ } :: tl ->
-                    parse_term tl >>= fun (right, rest') -> 
+                    parse_term tl >>= fun (right, rest') ->
                         p (Binary (e, Greater, right)) rest'
 
                 | { token_type = Lexer.GreaterEqual; _ } :: tl ->
-                    parse_term tl >>= fun (right, rest') -> 
+                    parse_term tl >>= fun (right, rest') ->
                         p (Binary (e, GreaterEqual, right)) rest'
 
                 | { token_type = Lexer.Less; _ } :: tl ->
-                    parse_term tl >>= fun (right, rest') -> 
+                    parse_term tl >>= fun (right, rest') ->
                         p (Binary (e, Less, right)) rest'
 
                 | { token_type = Lexer.LessEqual; _ } :: tl ->
-                    parse_term tl >>= fun (right, rest') -> 
+                    parse_term tl >>= fun (right, rest') ->
                         p (Binary (e, LessEqual, right)) rest'
 
                 | _ -> Ok (e, t)
@@ -183,16 +189,16 @@ and parse_comparison (tokens: Lexer.token list): (expr * Lexer.token list, parse
 
 (** Parses equality grammar *)
 and parse_equality (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result =
-    parse_comparison tokens >>= fun (left, rest) -> 
+    parse_comparison tokens >>= fun (left, rest) ->
         let rec p (e: expr) (t : Lexer.token list): (expr * Lexer.token list, parser_error) result =
             (
                 match t with
                 | { token_type = Lexer.BangEqual; _ } :: tl ->
-                    parse_factor tl >>= fun (right, rest') -> 
+                    parse_factor tl >>= fun (right, rest') ->
                         p (Binary (e, NotEqual, right)) rest'
 
                 | { token_type = Lexer.EqualEqual; _ } :: tl ->
-                    parse_factor tl >>= fun (right, rest') -> 
+                    parse_factor tl >>= fun (right, rest') ->
                         p (Binary (e, EqualEqual, right)) rest'
 
                 | _ -> Ok (e, t)
@@ -203,87 +209,127 @@ and parse_equality (tokens: Lexer.token list): (expr * Lexer.token list, parser_
 and parse_expression (tokens: Lexer.token list): (expr * Lexer.token list, parser_error) result =
     parse_equality tokens
 
-(** Recursively evaluates an expression. *)
-let rec eval_expression (e : expr): (expr, eval_error) result =
-    match e with 
-    | Literal lit -> Ok (Literal lit)
+type environment = { values: (string, literal) Hashtbl.t }
+let global_env = { values = Hashtbl.create 64 }
+
+(** Recursively evaluates an expression into a literal. *)
+let rec eval_expression (e : expr): (literal, eval_error) result =
+    match e with
+    | Literal lit -> Ok (lit)
 
     | Unary (Bang, expr) ->
         eval_expression expr >>= fun inner -> (
-            match inner with 
-            | Literal False -> Ok (Literal True)
-            | Literal True -> Ok (Literal False)
+            match inner with
+            | False -> Ok (True)
+            | True -> Ok (False)
             | _ -> Error (TypeError ("Invlaid unary operation encountered", Unary (Bang, expr)))
         )
 
     | Unary (Minus, expr) ->
         eval_expression expr >>= fun inner ->  (
-            match inner with 
-            | (Literal Number n) -> Ok (Literal (Number (-1. *. n)))
+            match inner with
+            | (Number n) -> Ok ((Number (-1. *. n)))
             | _ -> Error (TypeError ("Invalid unary operation encountered", Unary (Minus, expr)))
         )
 
     | Binary (e1, op, e2) ->
         eval_expression e1 >>= fun left ->
             eval_expression e2 >>= fun right -> (
-                match (left, op, right) with 
-                    | Literal l, EqualEqual, Literal r -> if l = r then Ok (Literal True) else Ok (Literal False)
-                    | Literal l, NotEqual, Literal r -> if l = r then Ok (Literal False) else Ok (Literal True)
+                match (left, op, right) with
+                    | l, EqualEqual, r -> if l = r then Ok (True) else Ok (False)
+                    | l, NotEqual, r -> if l = r then Ok (False) else Ok (True)
 
-                    | Literal l, Less, Literal r -> if l < r then Ok (Literal True) else Ok (Literal False)
-                    | Literal l, Greater, Literal r -> if l > r then Ok (Literal False) else Ok (Literal True)
+                    | l, Less, r -> if l < r then Ok (True) else Ok (False)
+                    | l, Greater, r -> if l > r then Ok (False) else Ok (True)
 
-                    | Literal l, LessEqual, Literal r -> if l <= r then Ok (Literal True) else Ok (Literal False)
-                    | Literal l, GreaterEqual, Literal r -> if l >= r then Ok (Literal False) else Ok (Literal True)
+                    | l, LessEqual, r -> if l <= r then Ok (True) else Ok (False)
+                    | l, GreaterEqual, r -> if l >= r then Ok (False) else Ok (True)
 
-                    | Literal Number n1, Plus, Literal Number n2 -> Ok (Literal (Number (n1 +. n2)))
+                    | Number n1, Plus, Number n2 -> Ok ((Number (n1 +. n2)))
 
-                    | Literal String s1, Plus, Literal String s2 -> Ok (Literal (String (s1 ^ s2)))
+                    | String s1, Plus, String s2 -> Ok ((String (s1 ^ s2)))
 
-                    | Literal String s1, Plus, Literal Number n1 -> Ok (Literal (String (Printf.sprintf "%s%g" s1 n1)))
+                    | String s1, Plus, Number n1 -> Ok ((String (Printf.sprintf "%s%g" s1 n1)))
 
-                    | Literal Number n1, Plus, Literal String s1 -> Ok (Literal (String (Printf.sprintf "%g%s" n1 s1)))
+                    | Number n1, Plus, String s1 -> Ok ((String (Printf.sprintf "%g%s" n1 s1)))
 
-                    | Literal Number n1, Minus, Literal Number n2 -> Ok (Literal (Number (n1 -. n2)))
-                    | Literal Number n1, Star, Literal Number n2 -> Ok (Literal (Number (n1 *. n2)))
-                    | Literal Number n1, Slash, Literal Number n2 -> Ok (Literal (Number (n1 /. n2)))
+                    | Number n1, Minus, Number n2 -> Ok ((Number (n1 -. n2)))
+                    | Number n1, Star, Number n2 -> Ok ((Number (n1 *. n2)))
+                    | Number n1, Slash, Number n2 -> Ok ((Number (n1 /. n2)))
 
                     | _ -> Error (TypeError ("Invalid binary operand encountered", (Binary (e1, op, e2))))
             )
 
-    | Grouping (expr) -> eval_expression expr
+    | Grouping expr -> eval_expression expr
 
-let rec parse_program (tokens : Lexer.token list): (unit, parser_error) result = 
-    let rec parse (toks : Lexer.token list): (unit, parser_error) result = 
-        parse_statement toks >>= fun (_, rest) -> (
-            match rest with 
-            | [{ token_type = Lexer.EOF; _ }] -> Ok ()
+    | Identifier id -> (
+        try 
+            Ok (Hashtbl.find global_env.values id)
+        with
+        | Not_found -> Error (IdentifierNotFound (id, e))
+    )
+
+type statement = 
+    | VarDecl of string * expr
+    | Print of expr
+    | Expression of expr
+
+let eval_statement (s: statement): (unit, eval_error) result =
+    match s with 
+    | VarDecl (id, expr) -> eval_expression expr >>= fun l -> (
+        Ok (Hashtbl.add global_env.values id l)
+    )
+    | Print expr -> eval_expression expr >>= fun l -> (
+        match l with 
+        | String s -> Printf.printf "%s\n" s
+        | Number n -> Printf.printf "%g\n" n
+        | True -> Printf.printf "true\n"
+        | False -> Printf.printf "false\n"
+        | Nil -> Printf.printf "nil\n"
+    ); Ok()
+    | Expression _ -> Ok ()
+
+
+let rec parse_program (tokens : Lexer.token list): (statement list, parser_error) result =
+    let rec parse (toks : Lexer.token list): (statement list, parser_error) result =
+        parse_statement toks >>= fun (stat, rest) -> (
+            match rest with
+            | [{ token_type = Lexer.EOF; _ }] -> Ok [stat]
             | [] -> Error ExpectedEOF
-            | _ -> parse rest
+            | _ -> parse rest >>= fun (statements) -> Ok (stat :: statements)
         )
     in
     parse tokens
 
-and parse_statement (tokens: Lexer.token list): (expr option * Lexer.token list, parser_error) result = 
+and parse_statement (tokens: Lexer.token list): (statement * Lexer.token list, parser_error) result =
     match tokens with
+    | { token_type = Lexer.Var; _ } :: { token_type = Lexer.Identifier; lexeme = id_lex; _ } :: tl -> (
+        match tl with
+        | { token_type = Lexer.Equal; _ } :: tl' -> 
+            parse_expression tl' >>= fun (right, rest) -> (
+                match rest with
+                | { token_type = Lexer.Semicolon; _ } :: rest' -> Ok (VarDecl (id_lex, right), rest')
+                | _ -> Error (MissingSemicolon)
+            )
+
+        | { token_type = Lexer.Semicolon; _ } :: tl' ->
+            Ok (VarDecl (id_lex, Literal Nil), tl') (* Declared but not defined, choose to assign it a nil expression *)
+
+        | tok :: _ -> Error (InvalidToken ("Expected semicolon or assignment operator.", Some tok))
+
+        | _ -> Error (InvalidToken ("Expected semicolon or assinment operator.", None))
+    )
     | { token_type = Lexer.Print; _ } :: tl ->
         parse_expression tl >>= fun (expr, toks) -> (
-            match toks with 
-            | { token_type = Lexer.Semicolon; _ } :: tl' -> (
-                match eval_expression expr with 
-                | Ok Literal String s -> Printf.printf "%s\n" s; Ok (None, tl')
-                | Ok Literal Number n -> Printf.printf "%g\n" n ; Ok (None, tl')
-                | Error eval_error -> Error (EvalError eval_error)
-                | _ -> Error PrintInvalidExpression
-            )
+            match toks with
+            | { token_type = Lexer.Semicolon; _ } :: tl' -> Ok (Print expr, tl')
             | _ -> Error MissingSemicolon
         );
 
     | _ ->
         parse_expression tokens >>= fun (expr, toks) -> (
-            match toks with 
+            match toks with
             | { token_type = Lexer.Semicolon; _ } :: tl' ->
-                Ok (Some expr, tl')
+                Ok (Expression expr, tl')
             | _ -> Error MissingSemicolon
         )
-            
