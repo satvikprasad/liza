@@ -237,6 +237,13 @@ let rec eval_expression (e : expr): (expr, eval_error) result =
                     | Literal l, GreaterEqual, Literal r -> if l >= r then Ok (Literal False) else Ok (Literal True)
 
                     | Literal Number n1, Plus, Literal Number n2 -> Ok (Literal (Number (n1 +. n2)))
+
+                    | Literal String s1, Plus, Literal String s2 -> Ok (Literal (String (s1 ^ s2)))
+
+                    | Literal String s1, Plus, Literal Number n1 -> Ok (Literal (String (Printf.sprintf "%s%g" s1 n1)))
+
+                    | Literal Number n1, Plus, Literal String s1 -> Ok (Literal (String (Printf.sprintf "%g%s" n1 s1)))
+
                     | Literal Number n1, Minus, Literal Number n2 -> Ok (Literal (Number (n1 -. n2)))
                     | Literal Number n1, Star, Literal Number n2 -> Ok (Literal (Number (n1 *. n2)))
                     | Literal Number n1, Slash, Literal Number n2 -> Ok (Literal (Number (n1 /. n2)))
@@ -264,8 +271,8 @@ and parse_statement (tokens: Lexer.token list): (expr option * Lexer.token list,
             match toks with 
             | { token_type = Lexer.Semicolon; _ } :: tl' -> (
                 match eval_expression expr with 
-                | Ok Literal String s -> Printf.printf "%s" s; Ok (None, tl')
-                | Ok Literal Number n -> Printf.printf "%f" n ; Ok (None, tl')
+                | Ok Literal String s -> Printf.printf "%s\n" s; Ok (None, tl')
+                | Ok Literal Number n -> Printf.printf "%g\n" n ; Ok (None, tl')
                 | Error eval_error -> Error (EvalError eval_error)
                 | _ -> Error PrintInvalidExpression
             )
