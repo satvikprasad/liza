@@ -477,7 +477,7 @@ let create_scoped_env (parent: environment) =
 let create_env =
     { values = Hashtbl.create 64; enclosing = None }
 
-let env_capture (a : environment) (b : environment) (c : string list) : (unit, eval_error) result =
+let rec env_capture (a : environment) (b : environment) (c : string list) : (unit, eval_error) result =
     let rec cap (c : string list): (unit, eval_error) result = 
         match c with
         | first :: tl -> (
@@ -485,7 +485,10 @@ let env_capture (a : environment) (b : environment) (c : string list) : (unit, e
                 Hashtbl.find a.values first |> Hashtbl.add b.values first; 
                 cap tl >>= fun () -> Ok ()
             with
-            | Not_found -> Error (CapturedVariableNotExist first)
+            | Not_found -> 
+                match a.enclosing with
+                | Some en -> env_capture en b [first] >>= fun () -> cap tl >>= fun () -> Ok()
+                | None -> Error (CapturedVariableNotExist first)
         )
         | [] -> Ok ()
     in cap c

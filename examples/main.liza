@@ -1,18 +1,13 @@
-var a = fn () {
-    var b = 3;
-    var d = 5;
-    var e = 10;
+var custom_print = fn (a b) {
+    ret fn (val) [a b] {
+        print a + " " + val + " " + b;
 
-    var c = fn () [b d] {
-        b = b + 1 + d;
-
-        print b;
+        a = a + 1; b = b + 1;
     };
-
-    ret c;
 };
 
-var c = a ();
-c ();
-c ();
-c ();
+var pp = custom_print (5 20);
+
+for var i = 0; i < 200; i = i + 1 {
+    pp ("satvik");
+}
