@@ -1,0 +1,15 @@
+// Define an application function that takes in a
+// function as it's first parameter
+var apply;
+apply = fn (func a) { 
+    func (a);
+};
+
+// Define a print function
+var p;
+p = fn (s) {
+    print s;
+};
+
+// Should output hello world.
+apply (p "Hello World!");

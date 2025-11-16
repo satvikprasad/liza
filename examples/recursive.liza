@@ -1,0 +1,7 @@
+var rec = fn () {
+    print "infinite";
+
+    rec ();
+};
+
+rec ();

@@ -452,6 +452,13 @@ and parse_statement (tokens : Lexer.token list): (statement * Lexer.token list, 
 
 let global_env = { values = Hashtbl.create 64; enclosing = None }
 
+let rec env_to_string (env : environment) : string = 
+    (Hashtbl.fold (fun key value acc -> key ^ "," ^ (pretty_print_expr (Literal (value))) ^ " | " ^ acc) env.values "") ^ "\n" ^ (
+        match env.enclosing with 
+        | None -> ""
+        | Some e -> "parent: " ^ env_to_string e
+    )
+
 let rec env_lookup (env : environment) (id : string): (literal, eval_error) result = 
     try 
         Ok (Hashtbl.find env.values id)
@@ -470,6 +477,7 @@ let rec env_assign (env : environment) (id : string) (lit : literal): (literal, 
         | Some e -> env_assign e id lit
         | None -> Error (AssignmentError id)
     )
+
 
 let create_scoped_env (parent: environment) =
     { values = Hashtbl.create 64; enclosing = Some parent } 
@@ -507,7 +515,7 @@ let rec eval_expression (e : expr) (env : environment): (literal, eval_error) re
             Ok (Callable (args, body, captures, Some e))
         )
 
-    | Literal lit -> Ok (lit)
+    | Literal lit -> Ok lit
 
     | Unary (Bang, expr) ->
         eval_expression expr env >>= fun inner -> (
@@ -585,8 +593,8 @@ let rec eval_expression (e : expr) (env : environment): (literal, eval_error) re
     | Call (to_call, exprs) ->
         eval_expression to_call env >>= fun lit_to_call -> (
             match lit_to_call with 
-            | Callable (args, stat, _, Some env) -> 
-                let scoped_env = create_scoped_env env in
+            | Callable (args, stat, _, Some closure_env) -> 
+                let scoped_env = create_scoped_env closure_env in
 
                 let rec push_args (exprs : expr list) (args : string list) : (unit, eval_error) result = (
                     match exprs, args with

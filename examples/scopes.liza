@@ -1,0 +1,11 @@
+var a = "global";
+
+{
+    var show_a = fn()[a] {
+        print a;
+    };
+
+    show_a();
+    var a = "block";
+    show_a();
+}

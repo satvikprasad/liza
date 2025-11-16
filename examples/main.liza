@@ -11,3 +11,5 @@ var pp = custom_print (5 20);
 for var i = 0; i < 200; i = i + 1 {
     pp ("satvik");
 }
+
+print pp; print custom_print;
