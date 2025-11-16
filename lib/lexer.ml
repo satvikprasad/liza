@@ -5,6 +5,8 @@ type token_type =
   | RightParen
   | LeftBrace
   | RightBrace
+  | LeftBracket
+  | RightBracket
   | Comma
   | Dot
   | Minus
@@ -34,6 +36,8 @@ let string_of_token_type tt =
 	| RightParen -> "RightParen"
 	| LeftBrace -> "LeftBrace"
 	| RightBrace -> "RightBrace"
+	| LeftBracket -> "LeftBracket"
+	| RightBracket -> "RightBracket"
 	| Comma -> "Comma"
 	| Dot -> "Dot"
 	| Minus -> "Minus"
@@ -98,6 +102,8 @@ let scan_tokens (source : string) : token list =
 			| ')' -> scan (pos + 1) line ({ token_type=RightParen; lexeme=")"; literal=None; line } :: tokens)
 			| '{' -> scan (pos + 1) line ({ token_type=LeftBrace; lexeme="{"; literal=None; line } :: tokens)
 			| '}' -> scan (pos + 1) line ({ token_type=RightBrace; lexeme="}"; literal=None; line } :: tokens)
+			| '[' -> scan (pos + 1) line ({ token_type=LeftBracket; lexeme="{"; literal=None; line } :: tokens)
+            | ']' -> scan (pos + 1) line ({ token_type=RightBracket; lexeme="}"; literal=None; line } :: tokens)
 			| ',' -> scan (pos + 1) line ({ token_type=Comma; lexeme=","; literal=None; line } :: tokens)
 			| '.' -> scan (pos + 1) line ({ token_type=Dot; lexeme="."; literal=None; line } :: tokens)
 			| '-' -> scan (pos + 1) line ({ token_type=Minus; lexeme="-"; literal=None; line } :: tokens)

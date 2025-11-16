@@ -3,7 +3,18 @@ var out_tobi = fn (a) {
         ret "Tobi is a " + a;
     }
 
-    ret "Tobi isn't a " + a;
+    ret fn () {
+        ret "Tobi isn't a " + a;
+    };
 };
 
+// This is a comment
 print out_tobi (12);
+
+// This should error out as a runtime error, 
+// can't add nil and numbers.
+print out_tobi (nil) ();
+
+for var i = 0; i < 20; i = i + 1 {
+    print out_tobi (i);
+}

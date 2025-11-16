@@ -1,5 +1,6 @@
 let (>>=) o f = Result.bind o f
 
+
 type binary_op =
     | EqualEqual
     | NotEqual
@@ -41,6 +42,7 @@ type expr =
     | Identifier of string
     | Assignment of string * expr
     | Call of expr * expr list
+
 and statement = 
     | VarDecl of string * expr
     | Print of expr
@@ -50,13 +52,19 @@ and statement =
     | While of expr * statement
     | For of statement * expr * expr * statement
     | Return of expr
+
 and literal =
     | Number of float
     | String of string
     | True
     | False
     | Nil
-    | Callable of string list * statement
+    | Callable of string list * statement * string list * environment option
+
+and environment = { 
+    values: (string, literal) Hashtbl.t;
+    enclosing: environment option
+}
 
 (** Generates a string representation of a given AST. *)
 let rec pretty_print_expr (e : expr): string =
@@ -72,7 +80,7 @@ let rec pretty_print_expr (e : expr): string =
     | Literal Nil ->
         Printf.sprintf "Nil"
 
-    | Literal (Callable (args, _)) ->
+    | Literal (Callable (args, _, _, _)) ->
         let rec p (args : string list): string = 
             match args with 
             | [] -> ""
@@ -115,6 +123,7 @@ type eval_error =
     | AssignmentError of string
     | IncorrectArgumentsError
     | UncallableExpr of expr
+    | CapturedVariableNotExist of string
 
 type parser_error =
     | InvalidToken of string * Lexer.token option
@@ -156,8 +165,24 @@ let rec parse_primary (tokens : Lexer.token list): (expr * Lexer.token list, par
             | _ -> Error (InvalidToken ("Expected identifier or closing parentheses.", None))
         )
         in q tl >>= fun (args, rest) -> (
-            parse_statement rest >>= fun (stat, toks) -> (
-                Ok (Literal (Callable (args, stat)), toks)
+            match rest with 
+            | { token_type = Lexer.LeftBracket; _ } :: tl -> 
+                let rec q (toks : Lexer.token list) : (string list * Lexer.token list, parser_error) result = (
+                    match toks with 
+                    | { token_type = Lexer.RightBracket; _ } :: tl -> Ok ([], tl)
+                    | { token_type = Lexer.Identifier; lexeme = arg; _ } :: tl -> 
+                        q tl >>= fun (args, toks) -> (
+                            Ok (arg :: args, toks)
+                        )
+                    | tok :: _ -> Error (InvalidToken ("Expected identifier or closing bracket.", Some tok))
+                    | _ -> Error (InvalidToken ("Expected identifier or closing bracket.", None))
+                ) in q tl >>= fun (captures, rest') -> (
+                    parse_statement rest' >>= fun (stat, toks) -> (
+                        Ok (Literal (Callable (args, stat, captures, None)), toks)
+                    )
+                )
+            | _ -> parse_statement rest >>= fun (stat, toks) -> (
+                Ok (Literal (Callable (args, stat, [], None)), toks)
             )
         )
     )
@@ -425,11 +450,6 @@ and parse_statement (tokens : Lexer.token list): (statement * Lexer.token list, 
             | _ -> Error MissingSemicolon
         )
 
-type environment = { 
-    values: (string, literal) Hashtbl.t;
-    enclosing: environment option
-}
-
 let global_env = { values = Hashtbl.create 64; enclosing = None }
 
 let rec env_lookup (env : environment) (id : string): (literal, eval_error) result = 
@@ -454,6 +474,22 @@ let rec env_assign (env : environment) (id : string) (lit : literal): (literal, 
 let create_scoped_env (parent: environment) =
     { values = Hashtbl.create 64; enclosing = Some parent } 
 
+let create_env =
+    { values = Hashtbl.create 64; enclosing = None }
+
+let env_capture (a : environment) (b : environment) (c : string list) : (unit, eval_error) result =
+    let rec cap (c : string list): (unit, eval_error) result = 
+        match c with
+        | first :: tl -> (
+            try 
+                Hashtbl.find a.values first |> Hashtbl.add b.values first; 
+                cap tl >>= fun () -> Ok ()
+            with
+            | Not_found -> Error (CapturedVariableNotExist first)
+        )
+        | [] -> Ok ()
+    in cap c
+
 let truthy lit = 
     match lit with 
     |  False | Nil -> false
@@ -462,6 +498,12 @@ let truthy lit =
 (** Recursively evaluates an expression into a literal. *)
 let rec eval_expression (e : expr) (env : environment): (literal, eval_error) result =
     match e with
+    | Literal Callable (args, body, captures, _)  ->
+        let e = create_env in
+        env_capture env e captures >>= fun () -> (
+            Ok (Callable (args, body, captures, Some e))
+        )
+
     | Literal lit -> Ok (lit)
 
     | Unary (Bang, expr) ->
@@ -516,17 +558,17 @@ let rec eval_expression (e : expr) (env : environment): (literal, eval_error) re
                     | l, LessEqual, r -> if l <= r then Ok (True) else Ok (False)
                     | l, GreaterEqual, r -> if l >= r then Ok (True) else Ok (False)
 
-                    | Number n1, Plus, Number n2 -> Ok ((Number (n1 +. n2)))
+                    | Number n1, Plus, Number n2 -> Ok (Number (n1 +. n2))
 
-                    | String s1, Plus, String s2 -> Ok ((String (s1 ^ s2)))
+                    | String s1, Plus, String s2 -> Ok (String (s1 ^ s2))
 
-                    | String s1, Plus, Number n1 -> Ok ((String (Printf.sprintf "%s%g" s1 n1)))
+                    | String s1, Plus, Number n1 -> Ok (String (Printf.sprintf "%s%g" s1 n1))
 
-                    | Number n1, Plus, String s1 -> Ok ((String (Printf.sprintf "%g%s" n1 s1)))
+                    | Number n1, Plus, String s1 -> Ok (String (Printf.sprintf "%g%s" n1 s1))
 
-                    | Number n1, Minus, Number n2 -> Ok ((Number (n1 -. n2)))
-                    | Number n1, Star, Number n2 -> Ok ((Number (n1 *. n2)))
-                    | Number n1, Slash, Number n2 -> Ok ((Number (n1 /. n2)))
+                    | Number n1, Minus, Number n2 -> Ok (Number (n1 -. n2))
+                    | Number n1, Star, Number n2 -> Ok (Number (n1 *. n2))
+                    | Number n1, Slash, Number n2 -> Ok (Number (n1 /. n2))
 
                     | _ -> Error (TypeError ("Invalid binary operand encountered", (Binary (e1, op, e2))))
             )
@@ -540,7 +582,7 @@ let rec eval_expression (e : expr) (env : environment): (literal, eval_error) re
     | Call (to_call, exprs) ->
         eval_expression to_call env >>= fun lit_to_call -> (
             match lit_to_call with 
-            | Callable (args, stat) -> 
+            | Callable (args, stat, _, Some env) -> 
                 let scoped_env = create_scoped_env env in
 
                 let rec push_args (exprs : expr list) (args : string list) : (unit, eval_error) result = (
@@ -567,6 +609,7 @@ and eval_statement (s : statement) (env : environment): (literal option, eval_er
     | VarDecl (id, expr) -> eval_expression expr env >>= fun l -> (
         Hashtbl.add env.values id l; Ok None
     )
+
     | Print expr -> eval_expression expr env >>= fun l -> (
         match l with 
         | String s -> Printf.printf "%s\n" s
@@ -574,9 +617,11 @@ and eval_statement (s : statement) (env : environment): (literal option, eval_er
         | True -> Printf.printf "true\n"
         | False -> Printf.printf "false\n"
         | Nil -> Printf.printf "nil\n"
-        | Callable (_, _) -> pretty_print_expr (Literal l) |> Printf.printf "%s\n"
+        | Callable _ -> pretty_print_expr (Literal l) |> Printf.printf "%s\n"
     ); Ok None;
+
     | Expression e -> eval_expression e env >>= fun _ -> Ok None
+
     | Block statements -> (
         let scoped_env = create_scoped_env env in
 
@@ -591,6 +636,7 @@ and eval_statement (s : statement) (env : environment): (literal option, eval_er
 
         in p statements
     )
+
     | If (cond, clause1, clause2) -> 
         eval_expression cond env >>= fun lit -> (
             match truthy lit, clause2  with

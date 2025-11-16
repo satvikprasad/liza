@@ -13,6 +13,8 @@ let run (source : string) =
             | Error (Liza.Parser.IncorrectArgumentsError) -> Printf.printf "Passed incorrect number of arguments to function.\n"
 
             | Error (Liza.Parser.UncallableExpr expr) -> Printf.printf "UncallableExpr: Attempted to call expression %s that was not callable.\n" (Liza.Parser.pretty_print_expr expr)
+
+            | Error (Liza.Parser.CapturedVariableNotExist var) -> Printf.printf "CapturedVariableNotExist: Can't capture non-existent variable %s\n" var
         )) statements
     )
 
