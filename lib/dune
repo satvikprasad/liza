@@ -1,2 +1,3 @@
 (library
- (name liza))
+ (name liza)
+ (public_name liza))
