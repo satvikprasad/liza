@@ -618,7 +618,12 @@ let rec eval_expression (e : expr) (env : environment): (literal, eval_error) re
 and eval_statement (s : statement) (env : environment): (literal option, eval_error) result =
     match s with 
     | VarDecl (id, expr) -> eval_expression expr env >>= fun l -> (
-        Hashtbl.add env.values id l; Ok None
+        match l with 
+        (* If we're assigning a callable to a variable, push the variable into the callable's scope *)
+        | Callable (_, _, _, Some fun_env) -> 
+                Hashtbl.add fun_env.values id l;
+                Hashtbl.add env.values id l; Ok None
+        | _ -> Hashtbl.add env.values id l; Ok None
     )
 
     | Print expr -> eval_expression expr env >>= fun l -> (

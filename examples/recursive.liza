@@ -1,7 +1,15 @@
-var rec = fn () {
-    print "infinite";
+var fib = fn(a) {
+    if (a == 0) {
+        ret 0;
+    }
 
-    rec ();
+    if (a == 1) {
+        ret 1;
+    }
+
+    ret fib(a - 1) + fib(a - 2);
 };
 
-rec ();
+for var i = 0; i < 32; i = i + 1 {
+    print fib(i);
+}
