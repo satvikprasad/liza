@@ -19,16 +19,16 @@ var merge = fn (a b) [len append] {
 
     var result = [];
 
-    while (i < len(a)) or (j < len(b)) {
-        if (i >= len(a)) {
+    while i < len(a) or j < len(b) {
+        if i >= len(a) {
             result = append (result b[j]);
             j = j + 1;
 
-        } else if (j >= len(b)) {
+        } else if j >= len(b) {
             result = append (result a[i]);
             i = i + 1;
 
-        } else if (a[i] < b[j]) {
+        } else if a[i] < b[j] {
             result = append (result a[i]);
             i = i + 1;
         } else {
