@@ -2,7 +2,7 @@
 A custom interpreter for Liza written in OCaml.
 
 ## Examples
-Liza is pretty cool. It's a dynamically typed language, and so far, it supports arrays, recursion, closures, and you can actually write an elementary merge sort in Liza:
+Liza is pretty cool. It's a dynamically typed language, and so far it supports arrays, recursion, and closures. You can actually write an elementary merge sort in Liza:
 
 ```
 var unsorted = [
