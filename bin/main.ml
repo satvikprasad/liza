@@ -1,4 +1,6 @@
 let run (source : string) =
+    Liza.Parser.env_push_stl Liza.Parser.global_env;
+
     let tokens = Liza.Lexer.scan_tokens source in
     match Liza.Parser.parse_program tokens with
     | Ok (statements) -> (
@@ -15,6 +17,11 @@ let run (source : string) =
             | Error (Liza.Parser.UncallableExpr expr) -> Printf.printf "UncallableExpr: Attempted to call expression %s that was not callable.\n" (Liza.Parser.pretty_print_expr expr)
 
             | Error (Liza.Parser.CapturedVariableNotExist var) -> Printf.printf "CapturedVariableNotExist: Can't capture non-existent variable %s\n" var
+
+            | Error (Liza.Parser.IndexOutOfBounds (expr, index)) -> Printf.printf "IndexOutOfBounds: attempted to index %s at %d\n" (Liza.Parser.pretty_print_expr expr) index
+            | Error (Liza.Parser.NonIndexableLiteral lit) -> Printf.printf "NonIndexableLiteral: Cannot index literal %s" (Liza.Parser.pretty_print_expr (Literal (lit)))
+
+            | Error (Liza.Parser.InvalidIndex lit) -> Printf.printf "InvalidIndex: Cannot use %s as index" (Liza.Parser.pretty_print_expr (Literal lit))
         )) statements
     )
 

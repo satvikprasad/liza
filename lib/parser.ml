@@ -1,6 +1,5 @@
 let (>>=) o f = Result.bind o f
 
-
 type binary_op =
     | EqualEqual
     | NotEqual
@@ -42,6 +41,7 @@ type expr =
     | Identifier of string
     | Assignment of string * expr
     | Call of expr * expr list
+    | Index of expr * expr 
 
 and statement = 
     | VarDecl of string * expr
@@ -52,6 +52,7 @@ and statement =
     | While of expr * statement
     | For of statement * expr * expr * statement
     | Return of expr
+    | RawBlock of (environment -> (literal option, eval_error) result)
 
 and literal =
     | Number of float
@@ -60,11 +61,25 @@ and literal =
     | False
     | Nil
     | Callable of string list * statement * string list * environment option
+    | List of expr list
 
 and environment = { 
     values: (string, literal) Hashtbl.t;
     enclosing: environment option
 }
+
+and eval_error =
+    | TypeError of string * expr
+    | IdentifierNotFound of string * expr
+    | LookupError of string
+    | AssignmentError of string
+    | IncorrectArgumentsError
+    | UncallableExpr of expr
+    | CapturedVariableNotExist of string
+    | IndexOutOfBounds of expr * int
+    | NonIndexableLiteral of literal
+    | InvalidIndex of literal
+
 
 (** Generates a string representation of a given AST. *)
 let rec pretty_print_expr (e : expr): string =
@@ -113,17 +128,19 @@ let rec pretty_print_expr (e : expr): string =
         in 
         "[" ^ pretty_print_expr expr ^ "]" ^ "(" ^ p args ^ ")"
 
+    | Literal (List literals) ->
+        let rec p (lits: expr list) = 
+            match lits with
+            | [] -> ""
+            | [last] -> pretty_print_expr last
+            | hd :: tl -> (pretty_print_expr hd) ^ ", " ^ p tl
+        in "[" ^ p literals ^ "]"
+
+    | Index (expr, index) ->
+        (pretty_print_expr expr) ^ "[" ^ (pretty_print_expr index) ^ "]"
+
 exception GroupException of string
 exception InvalidTokenException of string
-
-type eval_error =
-    | TypeError of string * expr
-    | IdentifierNotFound of string * expr
-    | LookupError of string
-    | AssignmentError of string
-    | IncorrectArgumentsError
-    | UncallableExpr of expr
-    | CapturedVariableNotExist of string
 
 type parser_error =
     | InvalidToken of string * Lexer.token option
@@ -187,14 +204,40 @@ let rec parse_primary (tokens : Lexer.token list): (expr * Lexer.token list, par
         )
     )
 
+    | { token_type = Lexer.LeftBracket; _ } :: tl ->
+        let rec p (ts : Lexer.token list) : (expr list * Lexer.token list, parser_error) result  = 
+            match ts with
+            | { token_type = Lexer.RightBracket; _ } :: tl' -> Ok ([], tl')
+            | _ -> parse_expression ts >>= (fun (e, toks) ->
+                p toks >>= (fun (rest_lits, rest') -> Ok (e :: rest_lits, rest'))
+            )
+        in 
+        p tl >>= (fun (lits, toks) -> Ok (Literal (List lits), toks))
+
     | hd :: _ -> (* TODO(satvik): Handle malformed expression*)
         Error (InvalidToken ((Printf.sprintf "Encountered invalid token (%s) at line %d\n" hd.lexeme hd.line), Some hd))
 
     | _ ->
         Error (InvalidToken ("Ran out of tokens, expected a primary expression.", None))
 
-and parse_call (tokens : Lexer.token list) : (expr * Lexer.token list, parser_error) result =
+and parse_index (tokens : Lexer.token list) : (expr * Lexer.token list, parser_error) result =
     parse_primary tokens >>= fun (left, rest) -> (
+        match rest with
+        | { token_type = Lexer.LeftBracket; _ } :: tl -> (
+            parse_expression tl >>= fun (index, rest') ->
+                match rest' with 
+                | { token_type = Lexer.RightBracket; _ } :: tl' -> Ok (Index (left, index), tl')
+                | hd :: _ -> (* TODO(satvik): Handle malformed expression*)
+                    Error (InvalidToken ((Printf.sprintf "Encountered invalid token (%s) at line %d\n" hd.lexeme hd.line), Some hd))
+
+                | _ ->
+                    Error (InvalidToken ("Ran out of tokens, expected a right bracket.", None))
+        )
+        | _ -> Ok (left, rest)
+    )
+
+and parse_call (tokens : Lexer.token list) : (expr * Lexer.token list, parser_error) result =
+    parse_index tokens >>= fun (left, rest) -> (
         (* Recursively define call chain *)
         let rec p (e: expr) (t: Lexer.token list): (expr * Lexer.token list, parser_error) result = (
             match t with
@@ -381,12 +424,13 @@ and parse_statement (tokens : Lexer.token list): (statement * Lexer.token list, 
 
         | _ -> Error (InvalidToken ("Expected semicolon or assinment operator.", None))
     )
+
     | { token_type = Lexer.Print; _ } :: tl ->
         parse_expression tl >>= fun (expr, toks) -> (
             match toks with
             | { token_type = Lexer.Semicolon; _ } :: tl' -> Ok (Print expr, tl')
             | _ -> Error MissingSemicolon
-        );
+        )
 
     | { token_type = Lexer.LeftBrace; _} :: tl ->
         let rec p (tokens: Lexer.token list) : (statement list * Lexer.token list, parser_error) result = 
@@ -468,6 +512,35 @@ let rec env_lookup (env : environment) (id : string): (literal, eval_error) resu
         | Some e -> env_lookup e id
         | None -> Error (LookupError id)
 
+let env_push_stl (env : environment) = 
+    Hashtbl.add env.values "len" (
+        Callable (["list"], RawBlock (fun e -> 
+            env_lookup e "list" >>= fun l ->
+                match l with
+                | List items -> Ok (Some (Number (float_of_int (List.length items))))
+                | _ -> Error (TypeError ("Cannot determine length of a quantity that is not a list", Literal l))
+        ), [], Some global_env)
+    );
+
+    Hashtbl.add env.values "append" (
+        Callable (["list"; "elem"], RawBlock (fun e -> 
+            env_lookup e "list" >>= fun l ->
+                match l with
+                | List items -> env_lookup e "elem" >>= fun elem ->
+                    Ok (Some (List (List.append items [Literal elem]))) 
+                | _ -> Error (TypeError ("Cannot append to a quantity that is not a list", Literal l))
+        ), [], Some global_env)
+    );
+
+    Hashtbl.add env.values "floor" (
+        Callable (["num"], RawBlock (fun e -> 
+            env_lookup e "num" >>= fun l ->
+                match l with
+                | Number n -> Ok (Some (Number (Float.floor n)))
+                | _ -> Error (TypeError ("Cannot floor to a quantity that is not a number", Literal l))
+        ), [], Some global_env)
+    )
+
 let rec env_assign (env : environment) (id : string) (lit : literal): (literal, eval_error) result = 
     if Hashtbl.mem env.values id then (
         Hashtbl.replace env.values id lit;
@@ -514,6 +587,15 @@ let rec eval_expression (e : expr) (env : environment): (literal, eval_error) re
         env_capture env e captures >>= fun () -> (
             Ok (Callable (args, body, captures, Some e))
         )
+
+    | Literal (List items) -> 
+        let rec p (items : expr list) : (expr list, eval_error) result = 
+            match items with 
+            | [] -> Ok ([])
+            | hd :: tl -> eval_expression hd env >>= fun lit ->
+                p tl >>= fun rest ->
+                    Ok (Literal lit :: rest)
+        in (p items) >>= fun eval_items -> Ok (List (eval_items))
 
     | Literal lit -> Ok lit
 
@@ -615,6 +697,24 @@ let rec eval_expression (e : expr) (env : environment): (literal, eval_error) re
             | _ -> Error (UncallableExpr to_call) 
         )
 
+    | Index (expr, index) ->
+        eval_expression index env >>= fun index_lit ->
+            match index_lit with
+            | Number n ->
+                eval_expression expr env >>= (fun list_lit ->
+                    match list_lit with
+                    | List items -> 
+                        let rec eval_at_index (l : expr list) (i : int) : (literal, eval_error) result =
+                            match l with 
+                            | [] -> Error (IndexOutOfBounds (Literal list_lit, int_of_float (Float.floor n)))
+                            | hd :: tl ->
+                                if i = 0 then (eval_expression hd env)
+                                else eval_at_index tl (i - 1)
+                        in eval_at_index items (int_of_float (Float.floor n))
+                    | _ -> Error (NonIndexableLiteral list_lit)
+                )
+            | _ -> Error (InvalidIndex index_lit)
+
 and eval_statement (s : statement) (env : environment): (literal option, eval_error) result =
     match s with 
     | VarDecl (id, expr) -> eval_expression expr env >>= fun l -> (
@@ -633,7 +733,7 @@ and eval_statement (s : statement) (env : environment): (literal option, eval_er
         | True -> Printf.printf "true\n"
         | False -> Printf.printf "false\n"
         | Nil -> Printf.printf "nil\n"
-        | Callable _ -> pretty_print_expr (Literal l) |> Printf.printf "%s\n"
+        | _ -> Printf.printf "%s\n" (pretty_print_expr (Literal l));
     ); Ok None;
 
     | Expression e -> eval_expression e env >>= fun _ -> Ok None
@@ -692,4 +792,7 @@ and eval_statement (s : statement) (env : environment): (literal option, eval_er
     | Return expr ->
         eval_expression expr env >>= fun lit -> (
             Ok (Some lit)
-        );
+        )
+
+    | RawBlock mutator ->
+        mutator env
